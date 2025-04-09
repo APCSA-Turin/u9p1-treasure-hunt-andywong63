@@ -1,9 +1,14 @@
 plugins {
 	id 'java'
+	id 'application'
 }
 
 repositories {
 	mavenCentral()
+}
+
+application {
+	mainClass = 'com.example.project.Game'
 }
 
 dependencies {
@@ -22,3 +27,6 @@ tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
 }
 
+run {
+	standardInput = System.in
+}
