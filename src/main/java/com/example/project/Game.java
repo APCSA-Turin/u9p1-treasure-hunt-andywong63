@@ -1,4 +1,8 @@
 package com.example.project;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Scanner;
 
 public class Game {
@@ -8,10 +12,12 @@ public class Game {
     private Treasure[] treasures;
     private Trophy trophy;
     private int size;
+    private String levelName;
+    private int enemyMoveTurns; // Amount of player moves before enemies move
 
-    public Game(int size) {
-        this.size = size;
-        initialize();
+    public Game(String levelName) {
+        this.levelName = levelName;
+        initialize(levelName);
         play();
     }
 
@@ -38,6 +44,9 @@ public class Game {
         boolean justTookDamage = false;
         boolean justCollectedTreasure = false;
 
+        // Enemy will only move every n moves the player makes (depending on difficulty)
+        int enemyMove = 1;
+
         while (true) {
             clearScreen(); // Clear the screen at the beginning of the while loop
 
@@ -63,7 +72,8 @@ public class Game {
                     healthDisplay,
                     treasureDisplay,
                     player.getCoords(),
-                    player.getRowCol(size)
+                    player.getRowCol(size),
+                    "Turns before enemy move: " + (enemyMoveTurns - enemyMove)
             };
             grid.display(nextToText);
             System.out.println("Enter WASD to move around, or Q to quit");
@@ -126,10 +136,28 @@ public class Game {
                         // If player is trying to move onto trophy without collecting all the treasures, don't move
                         continue;
                     }
+                    if (moveOnSprite instanceof Wall) {
+                        // Do not allow player to move onto wall
+                        continue;
+                    }
                     player.interact(size, direction, treasures.length, moveOnSprite);
                     player.move(direction);
                     grid.placeSprite(player, direction);
+
+                    if (moveOnSprite instanceof Enemy) {
+                        // If player moved onto enemy (and took damage), remove enemy from the list
+                        enemies[Arrays.asList(enemies).indexOf(moveOnSprite)] = null;
+                    }
                 }
+
+                // Enemy movement
+                if (enemyMove >= enemyMoveTurns) {
+                    for (int i = 0; i < enemies.length; i++) {
+                        enemyPathfind(enemies[i], i);
+                    }
+                    enemyMove = 0;
+                }
+                enemyMove++;
             }
             if (player.getLives() < oldLives) {
                 // Player took damage
@@ -145,32 +173,31 @@ public class Game {
             if (player.getWin()) {
                 clearScreen();
                 grid.win();
+                System.out.println(Util.ansiText("Press enter to go back", "37;3"));
+                scanner.nextLine();
                 break; // Exit game
             }
             // Check if lose
             if (player.getLives() <= 0) {
                 clearScreen();
                 grid.gameover();
+                System.out.println(Util.ansiText("Press enter to go back", "37;3"));
+                scanner.nextLine();
                 break; // Exit game
             }
-
-//            try {
-//                Thread.sleep(100); // Wait for 1/10 seconds
-//            } catch (InterruptedException e) {
-//                e.printStackTrace();
-//            }
         }
     }
 
-    public void initialize() {
-        // Create grid, player, and trophy
-        grid = new Grid(size);
-        player = new Player(0, 0);
-        trophy = new Trophy(size - 2, size - 2);
+    public void initialize(String levelName) {
+        // Load the level from the file
+        loadLevel(levelName);
 
-        // Place player and trophy on grid
-        grid.placeSprite(player);
-        grid.placeSprite(trophy);
+        // Assign variables based on level
+        if (levelName.equals("hard")) {
+            enemyMoveTurns = 3;
+        } else {
+            enemyMoveTurns = 2;
+        }
 
         // Randomly generate treasure and enemies
         treasures = new Treasure[3];
@@ -180,6 +207,43 @@ public class Game {
         }
         for (int i = 0; i < 3; i++) {
             placeRandomEnemy(i);
+        }
+    }
+
+    public void loadLevel(String levelName) {
+        try {
+            // Load the level file
+            File level = new File("src/main/java/com/example/project/levels/" + levelName + ".txt");
+            Scanner fileScanner = new Scanner(level);
+            // Initialize with -1 for now
+            int y = -1;
+            while (fileScanner.hasNext()) {
+                String line = fileScanner.nextLine();
+                if (y == -1) { // Get values from first line
+                    size = line.length();
+                    grid = new Grid(size);
+                    y = size - 1;
+                }
+                int x = 0;
+                for (String character : line.split("")) {
+                    if (character.equals(".")) {
+                        grid.placeSprite(new Dot(x, y));
+                    } else if (character.equals("W")) {
+                        grid.placeSprite(new Wall(x, y));
+                    } else if (character.equals("S") && player == null) {
+                        player = new Player(x, y, levelName);
+                        grid.placeSprite(player);
+                    } else if (character.equals("T") && trophy == null) {
+                        trophy = new Trophy(x, y);
+                        grid.placeSprite(trophy);
+                    }
+                    x++;
+                }
+                y--;
+            }
+            fileScanner.close();
+        } catch (IOException e) {
+            System.out.println(e.getMessage());
         }
     }
 
@@ -214,7 +278,131 @@ public class Game {
         }
     }
 
+
+    // Make enemy move one step closer to the player, avoiding obstacles, using A* algorithm
+    // Credits: https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+    public void enemyPathfind(Enemy enemy, int index) {
+        if (enemy == null) return;
+        // Stores nodes to be checked (checks in order from smallest F value)
+        ArrayList<PathfindingNode> openList = new ArrayList<>();
+        // Stores nodes already checked (so they don't get re-checked)
+        ArrayList<PathfindingNode> closedList = new ArrayList<>();
+
+        // Player node
+        PathfindingNode playerNode = new PathfindingNode(player.getX(), player.getY());
+        // Enemy node
+        PathfindingNode enemyNode = new PathfindingNode(enemy.getX(), enemy.getY(), playerNode);
+
+        openList.add(enemyNode);
+
+        while (!openList.isEmpty()) {
+            // Get next node to process in open list (smallest F value)
+            PathfindingNode currentNode = openList.get(0);
+            for (PathfindingNode node : openList) {
+                if (node.getF() < currentNode.getF()) {
+                    currentNode = node;
+                }
+            }
+
+            // Remove from open list and add to closed list
+            openList.remove(currentNode);
+            closedList.add(currentNode);
+
+            if (currentNode.onNode(playerNode)) {
+                // Found path to player
+                // Get last node in path that has a parent (the first value to move to)
+                PathfindingNode pathCurrentNode = currentNode;
+                while (pathCurrentNode.getParent().getParent() != null) {
+                    pathCurrentNode = pathCurrentNode.getParent();
+                }
+
+                // Move enemy onto this node
+                grid.placeSprite(new Dot(enemy.getX(), enemy.getY())); // Replace old spot with dot
+                enemy.setX(pathCurrentNode.getX());
+                enemy.setY(pathCurrentNode.getY());
+
+                if (enemy.onSprite(player)) {
+                    // Make player interact with enemy if they are on each other
+                    player.interact(treasures.length, enemy);
+                    enemies[index] = null;
+                    // (Do not place enemy on new spot since it replaces the player)
+                } else {
+                    // Enemy is not touching player, update grid with new spot
+                    grid.placeSprite(enemy);
+                }
+                return;
+            }
+
+            // Get the nodes adjacent to the current node (child nodes)
+            int x = currentNode.getX();
+            int y = currentNode.getY();
+            int[][] adjCoordinates = {{x, y + 1}, {x, y - 1}, {x + 1, y}, {x - 1, y}};
+            for (int[] coords : adjCoordinates) {
+                // Don't create nodes that are out of bounds
+                if (coords[0] < 0 || coords[1] < 0 || coords[0] >= size || coords[1] >= size) continue;
+
+                PathfindingNode childNode = new PathfindingNode(coords[0], coords[1], playerNode, currentNode);
+
+                // Don't add node to open list if the position has already been checked (in closed list)
+                boolean inClosedList = false;
+                for (PathfindingNode node : closedList) {
+                    if (childNode.onNode(node)) {
+                        inClosedList = true;
+                        break;
+                    }
+                }
+                if (inClosedList) continue;
+
+                // Don't go on top of other sprites
+                Sprite childSprite = grid.getSprite(childNode.getX(), childNode.getY());
+                if (!(childSprite instanceof Dot || childSprite instanceof Player)) continue;
+
+                // Check if node with same position is already in open list
+                boolean addToOpenList = true;
+                for (int i = 0; i < openList.size(); i++) {
+                    PathfindingNode openListNode = openList.get(i);
+                    if (openListNode.onNode(childNode)) {
+                        // Node with same X and Y value found, check if G in current child is better
+                        if (childNode.getG() < openListNode.getG()) {
+                            // Current child node goes to same location but faster (smaller G so fewer steps), so remove old one
+                            openList.remove(i);
+                        } else {
+                            // Current child node takes same number of or more steps, use one already in open list
+                            addToOpenList = false;
+                        }
+                        break;
+                    }
+                }
+                if (addToOpenList) {
+                    // Add child node to open list
+                    openList.add(childNode);
+                }
+            }
+        }
+    }
+
     public static void main(String[] args) {
-        Game game = new Game(10);
+        Scanner scanner = new Scanner(System.in);
+        while (true) {
+            clearScreen();
+            System.out.println(Util.ansiText("Treasure Hunt", "93;1"));
+            System.out.println(" [1] " + Util.ansiText("Easy", "32;4"));
+            System.out.println(" [2] " + Util.ansiText("Medium", "33;4"));
+            System.out.println(" [3] " + Util.ansiText("Hard", "31;4"));
+            System.out.println(" [0] " + Util.ansiText("Exit", "37;4"));
+            System.out.println();
+            System.out.println(Util.ansiText("Please choose a difficulty", "3"));
+            System.out.print("> ");
+            String choice = scanner.nextLine();
+            if (choice.equals("1")) {
+                new Game("easy");
+            } else if (choice.equals("2")) {
+                new Game("medium");
+            } else if (choice.equals("3")) {
+                new Game("hard");
+            } else if (choice.equals("0")) {
+                break;
+            }
+        }
     }
 }

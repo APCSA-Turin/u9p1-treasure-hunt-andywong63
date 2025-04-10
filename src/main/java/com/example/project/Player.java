@@ -13,6 +13,14 @@ public class Player extends Sprite {
         numLives = 2;
         win = false;
     }
+    public Player(int x, int y, String levelName) {
+        super(x, y);
+        if (levelName.equals("easy")) {
+            numLives = 3;
+        } else {
+            numLives = 2;
+        }
+    }
 
 
     public int getTreasureCount() {return treasureCount;}
@@ -44,15 +52,19 @@ public class Player extends Sprite {
     public void interact(int size, String direction, int numTreasures, Object obj) { // interact with an object in the position you are moving to 
     //numTreasures is the total treasures at the beginning of the game
         if (isValid(size, direction)) {
-            if (obj instanceof Enemy) {
-                numLives--;
-            } else if (obj instanceof Trophy) {
-                if (treasureCount >= numTreasures) {
-                    win = true;
-                }
-            } else if (obj instanceof Treasure) {
-                treasureCount++;
+            interact(numTreasures, obj);
+        }
+    }
+    // Interact method but without checking validity
+    public void interact(int numTreasures, Object obj) {
+        if (obj instanceof Enemy) {
+            numLives--;
+        } else if (obj instanceof Trophy) {
+            if (treasureCount >= numTreasures) {
+                win = true;
             }
+        } else if (obj instanceof Treasure) {
+            treasureCount++;
         }
     }
 

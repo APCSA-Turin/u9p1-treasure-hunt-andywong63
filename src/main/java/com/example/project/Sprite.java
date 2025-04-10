@@ -68,5 +68,13 @@ public class Sprite {
     }
 
 
+    /**
+     * Check if another sprite is on the same sprite
+     * @param sprite The other sprite to check
+     * @return Whether the sprites are on each other
+     */
+    public boolean onSprite(Sprite sprite) {
+        return sprite.getX() == x && sprite.getY() == y;
+    }
 
 }
